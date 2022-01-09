@@ -1,14 +1,23 @@
-def merge_coresets(coreset_a: [], coreset_b: []):
+from typing import List
+from Vertex import Vertex
+
+def merge_coresets(coreset_a: List[Vertex], coreset_b: List[Vertex]):
     return coreset_a + coreset_b
 
 
+def combine_into_pairs(coresets: List[List[Vertex]]):
+    resultList = []
+    for i in range(0, len(coresets), 2):
+        resultList.append(merge_coresets(coresets[i], coresets[i + 1]))
+    return resultList
 
-def compute_coreset(points):
+
+def compute_coreset(pointSets: List[List[Vertex]]):
     """
     Takes a set of points and computes the coreset for these points.
 
-    :param points: an array of X [Idk, yet, maybe a class like vertex? Do we want d-dimensions?]
-    :return: an array of X [see above], which are representative points.
+    :param points: a list of point sets as a list of lists of vertices
+    :return: a list of point sets as a list of lists of vertices [and possible some leader-esque information]
     """
     return [] # set of representatives
 
@@ -19,11 +28,10 @@ def main() -> None:
 
     # Split all points over x sets
     # Coresets = generate coresets across m machines, with the points split across the machines roughly equally
-    # while amount of coresets > 1:
-    #   Merge coresets into pairs. (1, 2, 3, 4, 5, 6 -> Q1: (1, 2), Q2: (3, 4), Q3: (5, 6))
-    #   coresets = compute coresets across machines
-
-    return # statement to get my debugger of my back :)
+    coresets = List[List[Vertex]]
+    while len(coresets) > 1:
+        newPointSets = combine_into_pairs(coresets)
+        coresets = compute_coreset(newPointSets)
 
 
 if __name__ == '__main__':

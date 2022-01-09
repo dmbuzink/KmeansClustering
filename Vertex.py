@@ -1,0 +1,33 @@
+class Vertex:
+    """
+    A vertex in a graph.
+    """
+
+    def __init__(self, index: int, x: float, y: float) -> 'Vertex':
+        """
+        Creates a `Vertex`.
+
+        Parameters
+        ----------
+
+        index : The index of the vertex in the graph.
+
+        x : The x-coordinate of the vertex.
+
+        y : The y-coordinate of the vertex.
+
+        Returns
+        -------
+
+        The created vertex.
+        """
+
+        self.index: int = index
+        self.x: float = x
+        self.y: float = y
+
+    def equals(self, other: 'Vertex') -> bool:
+        return self.x == other.x and self.y == other.y
+
+    def copy(self) -> 'Vertex':
+        return Vertex(self.index, self.x, self.y)
