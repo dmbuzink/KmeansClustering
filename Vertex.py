@@ -3,7 +3,7 @@ class Vertex:
     A vertex in a graph.
     """
 
-    def __init__(self, index: int, x: float, y: float) -> 'Vertex':
+    def __init__(self, index: int, x: float, y: float, weight: float = 0) -> 'Vertex':
         """
         Creates a `Vertex`.
 
@@ -16,6 +16,8 @@ class Vertex:
 
         y : The y-coordinate of the vertex.
 
+        w : The weight of the representative
+
         Returns
         -------
 
@@ -25,6 +27,7 @@ class Vertex:
         self.index: int = index
         self.x: float = x
         self.y: float = y
+        self.weight: float = weight
 
     def equals(self, other: 'Vertex') -> bool:
         return self.x == other.x and self.y == other.y
