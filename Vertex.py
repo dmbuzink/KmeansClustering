@@ -1,9 +1,9 @@
 class Vertex:
     """
-    A vertex in a graph.
+    A weighed point in 2D space.
     """
 
-    def __init__(self, index: int, x: float, y: float, weight: float = 0) -> 'Vertex':
+    def __init__(self, index: int, x: float, y: float, weight: float = 1) -> 'Vertex':
         """
         Creates a `Vertex`.
 

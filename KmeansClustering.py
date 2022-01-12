@@ -1,122 +1,123 @@
-from typing import List, Tuple
-from Vertex import Vertex
-import random
+from typing import List, Tuple, Dict
 import math
-from pyspark import SparkConf, SparkContext, RDD, Broadcast, AccumulatorParam
 
-# Store the SparkContext as a global variable
+import numpy as np
+from matplotlib import pyplot as plt
+from sklearn.datasets import make_circles, make_moons, make_blobs 
+from sklearn.cluster import kmeans_plusplus   
+from sklearn.metrics.pairwise import euclidean_distances
+
+from pyspark import SparkConf, SparkContext, RDD
+
+from Vertex import Vertex
+
 spark: SparkContext = None
 
-def merge_coresets(coreset_a: List[Vertex], coreset_b: List[Vertex]):
-    return coreset_a + coreset_b
+def create_blobs() -> Tuple[np.ndarray, np.ndarray]:
+    n_samples = 100
+    n_clusters = 3
 
+    return make_blobs(n_samples=n_samples, random_state=8, centers=n_clusters)
 
-def combine_into_pairs(coresets: List[List[Vertex]]):
-    resultList = []
-    for i in range(0, len(coresets), 2):
-        resultList.append(merge_coresets(coresets[i], coresets[i + 1]))
-    return resultList
+def perform_clustering(P: np.ndarray, k: int, epsilon: float = 0.1):
 
-
-def get_number_between_zero_and_one() -> float:
-    number = 0
-    while number == 0 or number == 1:
-        number = random.random() 
-    return number
-
-
-def dist(v_a: Vertex, v_b: Vertex) -> float:
-    return math.sqrt((v_a.x - v_b.x)**2 + (v_a.y - v_b.y)**2)
-
-
-def get_centroids(points: List[Vertex], k: int) -> List[Vertex]:
-    # See kMeans++
-    centroids: List[Vertex] = []
-
-    # Sample first centroid uniformly at random from input points
-    x = get_number_between_zero_and_one()
-    sampled_index = math.ceil(x * len(points))
-    centroids.append(points[sampled_index])
-    
-    min_distances: List[float] = []
-    for j in range(len(points)):
-        min_distances.append(math.inf)
-    
-    for i in range(1, k):
-        # Update distance to closest centroid for each input point
-        for j in range(len(points)):
-            x = dist(points[j], centroids[i - 1])
-            if min_distances[j] > x:
-                min_distances[j] = x
-
-        cumulative: List[float] = []
-        # Compute cumulative distribution of squared distances
-        cumulative.append(min_distances[1]**2)
-        for j in range(1, len(points)):
-            cumulative.append(cumulative[j - 1] + (min_distances[j]**2))
-
-        # Sample next centroid according to the distribution of squared distances
-        x = get_number_between_zero_and_one() * cumulative[-1]
-
-        # Determine index of sampled point
-        if x <= cumulative[1]:
-            sampled_index = 1
-        else:
-            for j in range(1, len(points)):
-                if x > cumulative[j - 1] and x <= cumulative[j]:
-                    sampled_index = j
-
-        # Add sampled point to set of centroids
-        centroids.append(points[sampled_index])
-    
-    return centroids
-
-
-def construct_coreset(vertices: List[Vertex]) -> List[Vertex]:
-    return vertices
-
-
-def map_vertex_to_tuple(v: Vertex):
-    return (v.index, v)
-
-
-def cluster(points: List[Vertex]):
-    """
-    Takes a set of points and computes the coreset for these points.
-
-    :param points: a list of point sets as a list of lists of vertices
-    :return: a list of point sets as a list of lists of vertices [and possible some leader-esque information]
-    """
     global spark
+    
+    # Create vertices for points
+    vertices = [Vertex(x, y, 1) for (x, y) in P]
+    # Add keys to points
+    vertices_with_index = [(i, vertices[i]) for i in range(len(vertices))]
+    # Parallelize
+    data = spark.parallelize(vertices_with_index)
+    # Perform clustering on data
 
-    # Initialize spark context
+
+def bind_coreset_construction(k: int, epsilon: float):
+    def coreset_construction(input: Tuple[int, List[Vertex]]) -> Tuple[int, List[Vertex]]:
+
+        # (Re)construct matrix of points
+        points = np.array([[v.x, v.y] for v in input])
+        weights = np.array([v.weight for v in input])
+
+        n = len(points)
+        
+        # Get initial set of k centers
+        c_points, c_indices = kmeans_plusplus(points, k)
+
+        # Calculate the average distance between points and their closest center
+        def dist_to_closest_center(p: np.ndarray) -> float:
+            minimum = float("inf")
+            for c in c_points:
+                minimum = min(minimum, np.linalg.norm(p - c)**2)
+            return minimum
+
+        r_outer = 0.0
+        r_inner = 0.0
+        for p in points:
+            r_outer = r_outer + dist_to_closest_center(p)
+        r_outer = r_outer / n
+    
+        NUM_CELLS = 5
+        grid_length = epsilon * r_outer / math.sqrt(2)
+        cell_length = grid_length / NUM_CELLS
+
+        def point_in_ball(p, c) -> bool:
+            dist = abs(np.linalg.norm(p - c))
+            return dist <= r_outer and dist > r_inner
+        
+        def point_in_grid(p, c) -> bool:
+            return c[0] - grid_length/2 <= p[0] <= c[0] + grid_length/2 and c[1] - grid_length/2 <= p[1] <= c[1] + grid_length/2
+        
+        def point_cell(p, c) -> Tuple[int, int]:
+            if not point_in_grid(p, c):
+                return None
+
+            col = (c[0] - p[0]) / cell_length
+            row = (c[1] - p[1]) / cell_length
+            
+            return (col, row)
+        
+        def cell_center(c, col, row) -> np.ndarray:
+            return np.array([c[0] - grid_length/2 + (col + 0.5) * cell_length, c[1] - grid_length/2 + (row + 0.5) * cell_length])
+        
+        # Store a list of dictionaries, one per ball/center point
+        # The keys of each dictionary are cells of the balls and the values are
+        # lists of indices in points that should be replaced by a single representative
+
+        # Find the points that should be replaced by a single representative
+        reps: List[Dict[Tuple[int, int], List[int]]] = [{}] * k
+        for i in range(len(points)):
+            p = points[i]
+            for c in c_points:
+                if not point_in_ball(p, c) or not point_in_grid(p, c):
+                    continue
+                cell = point_cell(p, c)
+                reps[c][cell].append(i)
+                
+        # Replace the found points by their representative
+        new_points = []
+
+    
+    return coreset_construction
+
+def main() -> None:
+
     sparkConf = SparkConf().setAppName('AffinityClustering')
     spark = SparkContext(conf=sparkConf)
-
-    pointTuples = map(map_vertex_to_tuple, points)
-
-    points_rdd = spark.parallelize(pointTuples)
-    # points_rdd.
-
     
+    data_X, data_y = create_blobs()
 
+    spark.stop()
 
-    return [] # set of representatives
+    # colors = ['#dc79c6' if i in c_indices else '#282a36'  for i in range(len(data_X))]
 
+    fig, ax_data = plt.subplots(nrows=1, ncols=1)
+    fig.tight_layout()
+    ax_data.set_title("Dataset")
+    ax_data.scatter(data_X[:, 0], data_X[:, 1], marker="o", s=25)
 
-# Main function
-def main() -> None:
-    # Datasets
-
-    # Split all points over x sets
-    # Coresets = generate coresets across m machines, with the points split across the machines roughly equally
-    coresets = List[List[Vertex]]
-    while len(coresets) > 1:
-        newPointSets = combine_into_pairs(coresets)
-        coresets = cluster(newPointSets)
-
+    plt.show()
 
 if __name__ == '__main__':
     # Initial call to main function
     main()
-
