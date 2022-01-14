@@ -48,6 +48,35 @@ def perform_clustering(P: np.ndarray, k: int, epsilon: float = 0.1, num_partitio
     # return np.array([[v.x, v.y] for v in data_collect])
 
 
+    # attempt at adding the pyspark stuff
+    def merge_coreset_keys(key: int) -> int:
+        return np.floor(key / 2)
+
+    def contains_multiple_coreset(rdd_val) -> bool:
+        found_key = 0
+        for key in rdd_val.keys().collect():
+            if key != found_key:
+                return True
+        return False
+
+    vertices = [(i, Vertex(i, P[i][0], P[i][1], 1)) for i in range(len(P))]
+    # Parallelize
+    B = len(vertices) / num_partitions
+    data = spark.parallelize(vertices)
+    data = data.map(lambda v: (math.floor(v[0] / B), v[1]))
+    while contains_multiple_coreset(data):
+        print(len(data.keys().collect()))
+        data = data.map(lambda v: (merge_coreset_keys(v[0]), v[1]))
+        # Calculate coreset
+        data = data.groupByKey().map(bind_coreset_construction(k, epsilon))
+        
+    # Flatten into list of vertices
+    data_collect = data.reduce(lambda a, b: (min(a[0], b[0]), a[1] + b[1]))[1]
+
+    # (Re)construct numpy matrix from vertices
+    return np.array([[v.x, v.y] for v in data_collect])
+
+
 def kmeans_local(P: np.ndarray, k: int, epsilon: float = 0.1, num_partitions: int = 10) -> np.ndarray:
 
     global ax_coreset
