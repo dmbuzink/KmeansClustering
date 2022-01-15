@@ -19,7 +19,7 @@ ax_data: plt.Axes = None
 ax_coreset: plt.Axes = None
 
 def create_blobs() -> Tuple[np.ndarray, np.ndarray]:
-    n_samples = 100
+    n_samples = 1000
     n_clusters = 3
 
     return make_blobs(n_samples=n_samples, random_state=8, centers=n_clusters)
@@ -31,11 +31,16 @@ def perform_clustering(P: np.ndarray, k: int, epsilon: float = 0.1, num_partitio
 
     # attempt at adding the pyspark stuff
     def merge_coreset_keys(key: int) -> int:
-        return np.floor(key / 2)
+        return math.floor(key / 2)
 
     def merge_lists(llist: Tuple[int, List[List[Vertex]]]) -> Tuple[int, List[Vertex]]:
         l = [item for sublist in llist[1] for item in sublist]
         return (llist[0], l)
+
+    def mark_not_repr(tup: Tuple[int, List[Vertex]]) -> Tuple[int, List[Vertex]]:
+        for v in tup[1]:
+            v.is_representative = False
+        return tup
 
 
     vertices = [(i, Vertex(i, P[i][0], P[i][1], 1)) for i in range(len(P))]
@@ -44,19 +49,19 @@ def perform_clustering(P: np.ndarray, k: int, epsilon: float = 0.1, num_partitio
     data = spark.parallelize(vertices)
     data = data.map(lambda v: (math.floor(v[0] / B), v[1]))
     data = data.groupByKey()
+
     
-    first_run = True
+    data = data.map(bind_coreset_construction(k, epsilon))
+    
     while data.count() > 1:
         print(data.count())
-        if first_run:
-            first_run = False
-        else:
-            data = data.map(lambda v: (merge_coreset_keys(v[0]), v[1]))
-            data = data.groupByKey().map(merge_lists)
-            temp = data.collect()
+        # Merge coresets
+        data = data.map(lambda v: (merge_coreset_keys(v[0]), v[1]))
+        data = data.groupByKey().map(merge_lists).map(mark_not_repr)
 
-        # Calculate coreset
+        # Calculate coresets
         data = data.map(bind_coreset_construction(k, epsilon))
+
         
     # Flatten into list of vertices
     result = data.reduce(lambda a, b: (min(a[0], b[0]), a[1] + b[1]))[1]
