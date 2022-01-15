@@ -64,9 +64,14 @@ def perform_clustering(P: np.ndarray, k: int, epsilon: float = 0.1, num_partitio
     B = len(vertices) / num_partitions
     data = spark.parallelize(vertices)
     data = data.map(lambda v: (math.floor(v[0] / B), v[1]))
+    first_run = True
     while contains_multiple_coreset(data):
         print(len(data.keys().collect()))
-        data = data.map(lambda v: (merge_coreset_keys(v[0]), v[1]))
+        if first_run:
+            first_run = False
+        else:
+            data = data.map(lambda v: (merge_coreset_keys(v[0]), v[1]))
+
         # Calculate coreset
         data = data.groupByKey().map(bind_coreset_construction(k, epsilon))
         
@@ -273,8 +278,8 @@ def main() -> None:
     global ax_data
     global ax_coreset
 
-    # sparkConf = SparkConf().setAppName('AffinityClustering')
-    # spark = SparkContext(conf=sparkConf)
+    sparkConf = SparkConf().setAppName('AffinityClustering')
+    spark = SparkContext(conf=sparkConf)
 
     fig, (ax_coreset, ax_data) = plt.subplots(nrows=2, ncols=1)
     fig.tight_layout()
@@ -283,7 +288,8 @@ def main() -> None:
     
     data_X, data_y = create_blobs()
 
-    labels = kmeans_local(data_X, 3)
+    # labels = kmeans_local(data_X, 3)
+    labels = perform_clustering(data_X, 3)
 
     # spark.stop()
 
