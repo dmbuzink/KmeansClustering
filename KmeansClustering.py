@@ -1,4 +1,4 @@
-from typing import List, Tuple, Dict
+from typing import Iterable, List, Tuple, Dict
 from functools import reduce
 import math
 
@@ -19,67 +19,68 @@ ax_data: plt.Axes = None
 ax_coreset: plt.Axes = None
 
 def create_blobs() -> Tuple[np.ndarray, np.ndarray]:
-    n_samples = 100000
+    n_samples = 100
     n_clusters = 3
 
     return make_blobs(n_samples=n_samples, random_state=8, centers=n_clusters)
 
 def perform_clustering(P: np.ndarray, k: int, epsilon: float = 0.1, num_partitions: int = 10) -> np.ndarray:
 
-    pass
-    # global spark
-    
-    # # Create vertices for points
-    # vertices = [(i, Vertex(i, P[i][0], P[i][1], 1)) for i in range(len(P))]
-    # # Parallelize
-    # data = spark.parallelize(vertices)
-    # # Divide among machines
-    # B = len(vertices) / num_partitions
-    # data = data.map(lambda v: (math.floor(v[0] / B), v[1]))
-    # # Calculate coreset
-    # data = data.groupByKey().map(bind_coreset_construction(k, epsilon))
-    # # Flatten into list of vertices
-    # data_collect = data.reduce(lambda a, b: (min(a[0], b[0]), a[1] + b[1]))[1]
-
-    # # Merge and recalculate coreset...
-    # # ...
-
-    # # (Re)construct numpy matrix from vertices
-    # return np.array([[v.x, v.y] for v in data_collect])
-
+    global spark
+    global ax_coreset
 
     # attempt at adding the pyspark stuff
     def merge_coreset_keys(key: int) -> int:
         return np.floor(key / 2)
 
-    def contains_multiple_coreset(rdd_val) -> bool:
-        found_key = 0
-        for key in rdd_val.keys().collect():
-            if key != found_key:
-                return True
-        return False
+    def merge_lists(llist: Tuple[int, List[List[Vertex]]]) -> Tuple[int, List[Vertex]]:
+        l = [item for sublist in llist[1] for item in sublist]
+        return (llist[0], l)
+
 
     vertices = [(i, Vertex(i, P[i][0], P[i][1], 1)) for i in range(len(P))]
     # Parallelize
     B = len(vertices) / num_partitions
     data = spark.parallelize(vertices)
     data = data.map(lambda v: (math.floor(v[0] / B), v[1]))
+    data = data.groupByKey()
+    
     first_run = True
-    while contains_multiple_coreset(data):
-        print(len(data.keys().collect()))
+    while data.count() > 1:
+        print(data.count())
         if first_run:
             first_run = False
         else:
             data = data.map(lambda v: (merge_coreset_keys(v[0]), v[1]))
+            data = data.groupByKey().map(merge_lists)
+            temp = data.collect()
 
         # Calculate coreset
-        data = data.groupByKey().map(bind_coreset_construction(k, epsilon))
+        data = data.map(bind_coreset_construction(k, epsilon))
         
     # Flatten into list of vertices
-    data_collect = data.reduce(lambda a, b: (min(a[0], b[0]), a[1] + b[1]))[1]
+    result = data.reduce(lambda a, b: (min(a[0], b[0]), a[1] + b[1]))[1]
 
-    # (Re)construct numpy matrix from vertices
-    return np.array([[v.x, v.y] for v in data_collect])
+    # Perform K-means clustering on result
+    # Reconstruct numpy matrix
+    points = np.array([v.position for v in result])
+    weights = np.array([v.weight for v in result])
+
+    kmeans = KMeans(n_clusters=k, random_state=0).fit(points, sample_weight=weights)
+
+    ax_coreset.scatter(points[:, 0], points[:, 1], marker="o", c=kmeans.labels_, s=25)
+
+    # Build index/class list for all points using the index/class of the representative points
+    labels = [-1] * len(vertices)
+    for i in range(len(result)):
+        v = result[i]
+        for r in v.representing:
+            labels[r.index] = kmeans.labels_[i]
+
+    if -1 in labels:
+        print("Something went wrong with the labels")
+
+    return np.array(labels)
 
 
 def kmeans_local(P: np.ndarray, k: int, epsilon: float = 0.1, num_partitions: int = 10) -> np.ndarray:
@@ -163,6 +164,9 @@ def bind_coreset_construction(k: int, epsilon: float):
             return minimum
 
         def replace_points(vertices: List[Vertex], centers: np.ndarray, r_outer: float, r_inner: float) -> List[Vertex]:
+
+            vertices = list(vertices)
+
             cell_length = epsilon * r_outer / math.sqrt(2)
             num_cells = math.ceil(r_outer / cell_length)
             grid_length = num_cells * cell_length
@@ -291,7 +295,7 @@ def main() -> None:
     # labels = kmeans_local(data_X, 3)
     labels = perform_clustering(data_X, 3)
 
-    # spark.stop()
+    spark.stop()
 
     ax_data.scatter(data_X[:, 0], data_X[:, 1], marker="o", c=labels, s=25)
 
