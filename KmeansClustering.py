@@ -24,10 +24,10 @@ def create_blobs() -> Tuple[np.ndarray, np.ndarray]:
 
     return make_blobs(n_samples=n_samples, random_state=8, centers=n_clusters)
 
-def perform_clustering(P: np.ndarray, k: int, epsilon: float = 0.1, num_partitions: int = 10) -> np.ndarray:
+def perform_clustering(P: np.ndarray, k: int, epsilon: float = 0.1, num_partitions: int = 16) -> np.ndarray:
 
     global spark
-    global ax_coreset
+    # global ax_coreset
 
     # attempt at adding the pyspark stuff
     def merge_coreset_keys(key: int) -> int:
@@ -42,8 +42,7 @@ def perform_clustering(P: np.ndarray, k: int, epsilon: float = 0.1, num_partitio
             v.is_representative = False
         return tup
 
-
-    vertices = [(i, Vertex(i, P[i][0], P[i][1], 1)) for i in range(len(P))]
+    vertices = [(i, Vertex(i, P[i][0], P[i][1], P[i][2], 1)) for i in range(len(P))]
     # Parallelize
     B = len(vertices) / num_partitions
     data = spark.parallelize(vertices)
@@ -69,26 +68,30 @@ def perform_clustering(P: np.ndarray, k: int, epsilon: float = 0.1, num_partitio
     # Perform K-means clustering on result
     # Reconstruct numpy matrix
     points = np.array([v.position for v in result])
+    # return points
     weights = np.array([v.weight for v in result])
 
-    kmeans = KMeans(n_clusters=k, random_state=0).fit(points, sample_weight=weights)
+    kmeans = KMeans(n_clusters=min(len(points), k), random_state=0).fit(points, sample_weight=weights)
 
-    ax_coreset.scatter(points[:, 0], points[:, 1], marker="o", c=kmeans.labels_, s=25)
+    # ax_coreset.scatter(points[:, 0], points[:, 1], marker="o", c=kmeans.labels_, s=25)
 
     # Build index/class list for all points using the index/class of the representative points
+    result_values = [-1] * len(vertices)
     labels = [-1] * len(vertices)
     for i in range(len(result)):
         v = result[i]
         for r in v.representing:
             labels[r.index] = kmeans.labels_[i]
+            result_values[r.index] = v.position
 
     if -1 in labels:
         print("Something went wrong with the labels")
 
-    return np.array(labels)
+    # return np.array(labels)
+    return np.array(result_values)
 
 
-def kmeans_local(P: np.ndarray, k: int, epsilon: float = 0.1, num_partitions: int = 10) -> np.ndarray:
+def kmeans_local(P: np.ndarray, k: int, epsilon: float = 0.01, num_partitions: int = 10) -> np.ndarray:
 
     global ax_coreset
 
@@ -188,9 +191,23 @@ def bind_coreset_construction(k: int, epsilon: float):
                 row = math.floor(abs(p[1] - (c[1] - grid_length/2)) / cell_length)
                 
                 return (col, row)
+
+            def point3cell(p, c) -> Tuple[int, int, int]:
+                if not point_in_ball(p, c):
+                    return None
+
+                col = math.floor(abs(p[0] - (c[0] - grid_length/2)) / cell_length)
+                row = math.floor(abs(p[1] - (c[1] - grid_length/2)) / cell_length)
+                depth = math.floor(abs(p[2] - (c[2] - grid_length/2)) / cell_length)
+
+                return (col, row, depth)
             
             def cell_center(c, col, row) -> np.ndarray:
                 ret = np.array([c[0] - grid_length/2 + (col + 0.5) * cell_length, c[1] - grid_length/2 + (row + 0.5) * cell_length])
+                return ret
+
+            def cell_center3(c, col, row, depth) -> np.ndarray:
+                ret = np.array([c[0] - grid_length/2 + (col + 0.5) * cell_length, c[1] - grid_length/2 + (row + 0.5) * cell_length, c[2] - grid_length/2 + (depth + 0.5) * cell_length])
                 return ret
 
             # Initialize new list of points to return
@@ -217,7 +234,8 @@ def bind_coreset_construction(k: int, epsilon: float):
                             continue
 
                         # The point falls in this ball
-                        cell = point2cell(v.position, c)
+                        # cell = point2cell(v.position, c)
+                        cell = point3cell(v.position, c)
 
                         if cell not in points_in_cell[j]:
                             points_in_cell[j][cell] = []
@@ -236,7 +254,8 @@ def bind_coreset_construction(k: int, epsilon: float):
                 c = centers[j]
                 # Iterate over all cells and add point per cell
                 for cell in points_in_cell[j]:
-                    cell_c = cell_center(c, cell[0], cell[1])
+                    # cell_c = cell_center(c, cell[0], cell[1])
+                    cell_c = cell_center3(c, cell[0], cell[1], cell[2])
                     in_cell = points_in_cell[j][cell]
 
                     representing: List[Vertex] = []
@@ -246,7 +265,7 @@ def bind_coreset_construction(k: int, epsilon: float):
                     weight = sum(v.weight for v in in_cell)
                     index = min(v.index for v in representing)
                     
-                    v = Vertex(index, cell_c[0], cell_c[1], weight)
+                    v = Vertex(index, cell_c[0], cell_c[1], cell_c[2], weight)
                     v.is_representative = True
                     v.representing = representing
 
@@ -305,6 +324,20 @@ def main() -> None:
     ax_data.scatter(data_X[:, 0], data_X[:, 1], marker="o", c=labels, s=25)
 
     plt.show()
+
+
+def get_kmeans_clustering(data, k):
+    global spark
+
+    sparkConf = SparkConf().setAppName('AffinityClustering')
+    spark = SparkContext(conf=sparkConf)
+
+    clustering = perform_clustering(data, k, epsilon=0.001)
+
+    spark.stop()
+
+    return clustering
+
 
 if __name__ == '__main__':
     # Initial call to main function

@@ -6,7 +6,7 @@ class Vertex:
     A weighed point in 2D space.
     """
 
-    def __init__(self, index: int, x: float, y: float, weight: float = 1) -> 'Vertex':
+    def __init__(self, index: int, x: float, y: float, z: float, weight: float = 1) -> 'Vertex':
         """
         Creates a `Vertex`.
 
@@ -28,16 +28,16 @@ class Vertex:
         """
 
         self.index: int = index
-        self.position: np.ndarray = np.array([x, y])
+        self.position: np.ndarray = np.array([x, y, z])
         self.weight: float = weight
         self.is_representative: bool = False
         self.representing: List[Vertex] = [self]
 
     def equals(self, other: 'Vertex') -> bool:
-        return self.x == other.x and self.y == other.y
+        return self.x == other.x and self.y == other.y and self.z == other.z
 
     def copy(self) -> 'Vertex':
-        return Vertex(self.index, self.x, self.y)
+        return Vertex(self.index, self.x, self.y, self.z)
     
     def __str__(self) -> str:
         return f"[{self.index}]: ({self.position})"

@@ -2,7 +2,9 @@ from skimage import io
 import numpy as np
 
 # CONFIG
-image_file_name = "test_image.jpg"
+from KmeansClustering import perform_clustering, get_kmeans_clustering
+
+image_file_name = "Lena.png"
 
 
 #Read the image
@@ -25,7 +27,7 @@ image = image.reshape(rows*cols, 3)
 # #Replace each pixel value with its nearby centroid
 # compressed_image = kmeans.cluster_centers_[kmeans.labels_]
 
-kmeans_clustering = []
+kmeans_clustering = get_kmeans_clustering(image, 64)
 
 compressed_image = np.clip(kmeans_clustering.astype('uint8'), 0, 255)
 
