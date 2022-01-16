@@ -1,3 +1,5 @@
+import random
+import time
 from typing import Iterable, List, Tuple, Dict
 from functools import reduce
 import math
@@ -43,10 +45,16 @@ def perform_clustering(P: np.ndarray, k: int, epsilon: float = 0.1, num_partitio
         return tup
 
     vertices = [(i, Vertex(i, P[i][0], P[i][1], P[i][2], 1)) for i in range(len(P))]
+    # random.shuffle(vertices)
+    # for index, value in enumerate(vertices):
+    #     vertex = vertices[index][1]
+    #     vertex.index = index
+    #     vertices[index] = (index, vertex)
+
     # Parallelize
-    B = len(vertices) / num_partitions
+    # B = len(vertices) / num_partitions
     data = spark.parallelize(vertices)
-    data = data.map(lambda v: (math.floor(v[0] / B), v[1]))
+    data = data.map(lambda v: (v[0] % num_partitions, v[1]))
     data = data.groupByKey()
 
     
@@ -71,18 +79,19 @@ def perform_clustering(P: np.ndarray, k: int, epsilon: float = 0.1, num_partitio
     # return points
     weights = np.array([v.weight for v in result])
 
-    kmeans = KMeans(n_clusters=min(len(points), k), random_state=0).fit(points, sample_weight=weights)
+    kmeans = KMeans(n_clusters=k, random_state=0).fit(points, sample_weight=weights)
 
     # ax_coreset.scatter(points[:, 0], points[:, 1], marker="o", c=kmeans.labels_, s=25)
 
     # Build index/class list for all points using the index/class of the representative points
+    print(len(kmeans.cluster_centers_))
     result_values = [-1] * len(vertices)
     labels = [-1] * len(vertices)
     for i in range(len(result)):
         v = result[i]
         for r in v.representing:
             labels[r.index] = kmeans.labels_[i]
-            result_values[r.index] = v.position
+            result_values[r.index] = kmeans.cluster_centers_[kmeans.labels_[i]]
 
     if -1 in labels:
         print("Something went wrong with the labels")
@@ -96,7 +105,7 @@ def kmeans_local(P: np.ndarray, k: int, epsilon: float = 0.01, num_partitions: i
     global ax_coreset
 
     # Create list of vertices
-    vertices = [Vertex(i, P[i][0], P[i][1], 1) for i in range(len(P))]
+    vertices = [Vertex(i, P[i][0], P[i][1], P[i][2], 1) for i in range(len(P))]
     # Define bucket size
     B = len(vertices) / num_partitions
     # Divide vertices among buckets
@@ -137,19 +146,23 @@ def kmeans_local(P: np.ndarray, k: int, epsilon: float = 0.01, num_partitions: i
 
     kmeans = KMeans(n_clusters=k, random_state=0).fit(points, sample_weight=weights)
 
-    ax_coreset.scatter(points[:, 0], points[:, 1], marker="o", c=kmeans.labels_, s=25)
+    # ax_coreset.scatter(points[:, 0], points[:, 1], marker="o", c=kmeans.labels_, s=25)
 
     # Build index/class list for all points using the index/class of the representative points
+    result_values = [-1] * len(vertices)
     labels = [-1] * len(vertices)
     for i in range(len(result)):
         v = result[i]
         for r in v.representing:
             labels[r.index] = kmeans.labels_[i]
+            result_values[r.index] = v.position
 
     if -1 in labels:
         print("Something went wrong with the labels")
 
-    return np.array(labels)
+    # return np.array(labels)
+    return np.array(result_values)
+
 
 def bind_coreset_construction(k: int, epsilon: float):
     def coreset_construction(input: Tuple[int, List[Vertex]]) -> Tuple[int, List[Vertex]]:
@@ -210,6 +223,10 @@ def bind_coreset_construction(k: int, epsilon: float):
                 ret = np.array([c[0] - grid_length/2 + (col + 0.5) * cell_length, c[1] - grid_length/2 + (row + 0.5) * cell_length, c[2] - grid_length/2 + (depth + 0.5) * cell_length])
                 return ret
 
+            def random_repr3(c, col, row, depth) -> np.ndarray:
+                ret = np.array([c[0] - grid_length/2 + (col + random.random()) * cell_length, c[1] - grid_length/2 + (row + random.random()) * cell_length, c[2] - grid_length/2 + (depth + random.random()) * cell_length])
+                return ret
+
             # Initialize new list of points to return
             # For each ball, keep a dictionary that stores a list per cell containing
             # the points in that cell
@@ -256,6 +273,7 @@ def bind_coreset_construction(k: int, epsilon: float):
                 for cell in points_in_cell[j]:
                     # cell_c = cell_center(c, cell[0], cell[1])
                     cell_c = cell_center3(c, cell[0], cell[1], cell[2])
+                    # cell_c = random_repr3(c, cell[0], cell[1], cell[2])
                     in_cell = points_in_cell[j][cell]
 
                     representing: List[Vertex] = []
@@ -329,15 +347,22 @@ def main() -> None:
 def get_kmeans_clustering(data, k):
     global spark
 
-    sparkConf = SparkConf().setAppName('AffinityClustering')
+    sparkConf = SparkConf().setAppName('KmeansClustering')
     spark = SparkContext(conf=sparkConf)
 
-    clustering = perform_clustering(data, k, epsilon=0.001)
+    start_time = time.time()
+    clustering = perform_clustering(data, k, epsilon=0.01)
+    elapsed_time = time.time() - start_time
 
     spark.stop()
 
-    return clustering
+    return (clustering, elapsed_time)
 
+
+def get_kmeans_clustering_local(data, k):
+
+    clustering = kmeans_local(data, k, epsilon=0.1)
+    return clustering
 
 if __name__ == '__main__':
     # Initial call to main function
