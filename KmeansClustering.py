@@ -21,7 +21,7 @@ ax_data: plt.Axes = None
 ax_coreset: plt.Axes = None
 
 def create_blobs() -> Tuple[np.ndarray, np.ndarray]:
-    n_samples = 1000
+    n_samples = 100
     n_clusters = 3
 
     return make_blobs(n_samples=n_samples, random_state=8, centers=n_clusters)
@@ -29,54 +29,36 @@ def create_blobs() -> Tuple[np.ndarray, np.ndarray]:
 def perform_clustering(P: np.ndarray, k: int, epsilon: float = 0.1, num_partitions: int = 16) -> np.ndarray:
 
     global spark
-    # global ax_coreset
+    # global ax_coreset    
+    
+    def concat_lists(t: Iterable[List[Vertex]]) -> List[List[Vertex]]:
+        return [[item for sublist in t for item in sublist]]
 
-    # attempt at adding the pyspark stuff
-    def merge_coreset_keys(key: int) -> int:
-        return math.floor(key / 2)
+    vertices = [Vertex(i, P[i][0], P[i][1], P[i][2], 1) for i in range(len(P))]
 
-    def merge_lists(llist: Tuple[int, List[List[Vertex]]]) -> Tuple[int, List[Vertex]]:
-        l = [item for sublist in llist[1] for item in sublist]
-        return (llist[0], l)
+    num_partitions = min(len(vertices), num_partitions)
 
-    def mark_not_repr(tup: Tuple[int, List[Vertex]]) -> Tuple[int, List[Vertex]]:
-        for v in tup[1]:
-            v.is_representative = False
-        return tup
-
-    vertices = [(i, Vertex(i, P[i][0], P[i][1], P[i][2], 1)) for i in range(len(P))]
-    # random.shuffle(vertices)
-    # for index, value in enumerate(vertices):
-    #     vertex = vertices[index][1]
-    #     vertex.index = index
-    #     vertices[index] = (index, vertex)
-
-    # Parallelize
-    # B = len(vertices) / num_partitions
-    data = spark.parallelize(vertices)
-    data = data.map(lambda v: (v[0] % num_partitions, v[1]))
-    data = data.groupByKey()
-
+    data = spark.parallelize(vertices, num_partitions).glom()
     
     data = data.map(bind_coreset_construction(k, epsilon))
     
-    while data.count() > 1:
-        print(data.count())
+    while num_partitions > 1:
         # Merge coresets
-        data = data.map(lambda v: (merge_coreset_keys(v[0]), v[1]))
-        data = data.groupByKey().map(merge_lists).map(mark_not_repr)
+        num_partitions = max(1, num_partitions // 2)
+        data = data.repartition(num_partitions).mapPartitions(concat_lists)
 
         # Calculate coresets
         data = data.map(bind_coreset_construction(k, epsilon))
 
-        
     # Flatten into list of vertices
-    result = data.reduce(lambda a, b: (min(a[0], b[0]), a[1] + b[1]))[1]
+    total_result = data.collect()
+    if (len(total_result) > 1):
+        print("Result had more than one subset")
+    result = total_result[0]
 
     # Perform K-means clustering on result
     # Reconstruct numpy matrix
     points = np.array([v.position for v in result])
-    # return points
     weights = np.array([v.weight for v in result])
 
     kmeans = KMeans(n_clusters=k, random_state=0).fit(points, sample_weight=weights)
@@ -90,7 +72,7 @@ def perform_clustering(P: np.ndarray, k: int, epsilon: float = 0.1, num_partitio
     for i in range(len(result)):
         v = result[i]
         for r in v.representing:
-            labels[r.index] = kmeans.labels_[i]
+            # labels[r.index] = kmeans.labels_[i]
             result_values[r.index] = kmeans.cluster_centers_[kmeans.labels_[i]]
 
     if -1 in labels:
@@ -105,7 +87,8 @@ def kmeans_local(P: np.ndarray, k: int, epsilon: float = 0.01, num_partitions: i
     global ax_coreset
 
     # Create list of vertices
-    vertices = [Vertex(i, P[i][0], P[i][1], P[i][2], 1) for i in range(len(P))]
+    # [!] Replaced the Z with a 0 to test with blobs
+    vertices = [Vertex(i, P[i][0], P[i][1], 0, 1) for i in range(len(P))]
     # Define bucket size
     B = len(vertices) / num_partitions
     # Divide vertices among buckets
@@ -165,14 +148,15 @@ def kmeans_local(P: np.ndarray, k: int, epsilon: float = 0.01, num_partitions: i
 
 
 def bind_coreset_construction(k: int, epsilon: float):
-    def coreset_construction(input: Tuple[int, List[Vertex]]) -> Tuple[int, List[Vertex]]:
+    def coreset_construction(vertices: List[Vertex]) -> List[Vertex]:
 
-        vertices = input[1]
         n = len(vertices)
 
-        print(f"Start: {n}")
+        print(f"Subset size: {n}")
 
         points = np.array([v.position for v in vertices])
+
+        print(f"Shape: {points.shape}")
         
         # Get initial set of k centers
         c_points, c_indices = kmeans_plusplus(points, k)
@@ -309,10 +293,11 @@ def bind_coreset_construction(k: int, epsilon: float):
             r_outer = 2**j * r
             vertices = replace_points(vertices, c_points, r_outer, r_inner)
             j += 1
-        
-        print(f"Subset {input[0]} points: {len(vertices)}")
 
-        return (input[0], vertices)
+        for v in vertices:
+            v.is_representative = False
+        
+        return vertices
 
     
     return coreset_construction

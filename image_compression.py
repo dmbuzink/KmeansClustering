@@ -12,7 +12,7 @@ def flatten(t):
 # CONFIG
 from KmeansClustering import perform_clustering, get_kmeans_clustering, get_kmeans_clustering_local
 
-image_file_name = "kaladin.jpg"
+image_file_name = "Lena.png"
 
 
 #Read the image
