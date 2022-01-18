@@ -59,8 +59,8 @@ def perform_clustering(P: np.ndarray, k: int, epsilon: float = 0.1, num_partitio
 
     
     data = data.map(bind_coreset_construction(k, epsilon))
-    
-    while data.count() > 1:
+
+    while num_partitions > 1:
         print(data.count())
         # Merge coresets
         data = data.map(lambda v: (merge_coreset_keys(v[0]), v[1]))
@@ -68,10 +68,12 @@ def perform_clustering(P: np.ndarray, k: int, epsilon: float = 0.1, num_partitio
 
         # Calculate coresets
         data = data.map(bind_coreset_construction(k, epsilon))
+        num_partitions = num_partitions // 2
 
         
     # Flatten into list of vertices
     result = data.reduce(lambda a, b: (min(a[0], b[0]), a[1] + b[1]))[1]
+    # result = data.collect()[1]
 
     # Perform K-means clustering on result
     # Reconstruct numpy matrix
@@ -344,14 +346,14 @@ def main() -> None:
     plt.show()
 
 
-def get_kmeans_clustering(data, k):
+def get_kmeans_clustering(data, k, p: int = 128):
     global spark
 
     sparkConf = SparkConf().setAppName('KmeansClustering')
     spark = SparkContext(conf=sparkConf)
 
     start_time = time.time()
-    clustering = perform_clustering(data, k, epsilon=0.01)
+    clustering = perform_clustering(data, k, epsilon=0.01, num_partitions=p)
     elapsed_time = time.time() - start_time
 
     spark.stop()
@@ -361,7 +363,7 @@ def get_kmeans_clustering(data, k):
 
 def get_kmeans_clustering_local(data, k):
 
-    clustering = kmeans_local(data, k, epsilon=0.1)
+    clustering = kmeans_local(data, k, epsilon=0.1, num_partitions=2048)
     return clustering
 
 if __name__ == '__main__':
